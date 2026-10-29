@@ -11,3 +11,6 @@ REGISTRY["attn"] = AttnAgent
 
 from .macpro_attn_agent import MACProAttnAgent
 REGISTRY["macpro_attn"] = MACProAttnAgent
+
+from .rpg_agent import RPGAgent
+REGISTRY["rpg"] = RPGAgent

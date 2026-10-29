@@ -157,9 +157,11 @@ class SC2Decomposer:
         enemy_states = [state_input[:, :, base + i * self.state_nf_en:base + (i + 1) * self.state_nf_en] for i in range(self.n_enemies)]
         # extract last_action_states
         base += self.n_enemies * self.state_nf_en
-        last_action_states = [state_input[:, :, base + i * self.n_actions:base + (i + 1) * self.n_actions] for i in range(self.n_agents)]
+        last_action_states = []
+        if self.state_last_action:
+            last_action_states = [state_input[:, :, base + i * self.n_actions:base + (i + 1) * self.n_actions] for i in range(self.n_agents)]
         # extract timestep_number_state
-        base += self.n_agents * self.n_actions
+        base += self.last_action_state_dim
         timestep_number_state = state_input[:, :, base:base+self.timestep_number_state_dim]        
 
         return ally_states, enemy_states, last_action_states, timestep_number_state

@@ -1,0 +1,7 @@
+# Reproducible LBF research protocol. The paper did not supply its LBF task list.
+env: lbf
+tasks:
+  - {name: lbf_2p_1f, players: 2, field_size: [8, 8], max_food: 1, sight: 8, max_episode_steps: 50, max_player_level: 3, force_coop: true}
+  - {name: lbf_3p_2f, players: 3, field_size: [8, 8], max_food: 2, sight: 8, max_episode_steps: 50, max_player_level: 3, force_coop: true}
+  - {name: lbf_4p_2f, players: 4, field_size: [10, 10], max_food: 2, sight: 10, max_episode_steps: 50, max_player_level: 3, force_coop: true}
+task_steps: [400000, 400000, 400000]

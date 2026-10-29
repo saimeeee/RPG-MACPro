@@ -7,3 +7,6 @@ REGISTRY = {}
 REGISTRY["q_learner"] = QLearner
 REGISTRY["q_learner_macpro_attn"] = QLearnerMACProAttn
 REGISTRY["q_learner_macpro_rnn"] = QLearnerMACProRNN
+
+from .rpg_learner import RPGQLearner
+REGISTRY["rpg_learner"] = RPGQLearner

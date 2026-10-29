@@ -1,0 +1,13 @@
+# Task order from Figure 3; stage lengths read from Figure 3/4 backgrounds.
+env: sc2
+# Explicit reproduction choice; the supplied RPG main text does not name a build.
+env_args: {game_version: '4.10'}
+tasks: [5m_vs_6m, 12m, 5m, 8m_vs_9m]
+task_steps: [1000000, 500000, 500000, 500000]
+# Zero-shot requires an explicit --zero-shot-embedding (paper did not specify it).
+generalization_tasks: [3m, 8m, 10m, 10m_vs_11m]
+# Table 2 also uses 15m, absent from the upstream map files and registry.
+# Add the authentic map plus registration before adding it to the runnable list.
+paper_generalization_tasks: [3m, 8m, 10m, 10m_vs_11m, 15m]
+return_min: 0.0
+return_max: 20.0

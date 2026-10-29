@@ -1,0 +1,22 @@
+# Integration validation only, NOT the paper's LBF benchmark.
+env: lbf
+tasks:
+  - {name: lbf_2p_1f, players: 2, field_size: [5, 5], max_food: 1, sight: 5, max_episode_steps: 12, max_player_level: 3, force_coop: true}
+  - {name: lbf_3p_2f, players: 3, field_size: [6, 6], max_food: 2, sight: 6, max_episode_steps: 12, max_player_level: 3, force_coop: true}
+task_steps: [96, 96]
+batch_size: 2
+buffer_size: 8
+test_nepisode: 2
+test_interval: 96
+learner_log_interval: 24
+rpg_importance_samples: 2
+rpg_return_probe_episodes: 2
+target_update_interval: 4
+rnn_hidden_dim: 16
+entity_embed_dim: 16
+attn_embed_dim: 8
+mixing_embed_dim: 8
+rpg_task_embed_dim: 8
+rpg_hyper_hidden_dim: 16
+rpg_head_hidden_dim: 16
+epsilon_anneal_time: 96

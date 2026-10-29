@@ -1,0 +1,15 @@
+.venv/
+.venv-smac/
+.tmp/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest-tmp*/
+tmp/
+results/
+3rdparty/
+
+.env
+.env.local
+.ssh/
+*.pem

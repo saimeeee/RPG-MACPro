@@ -1,3 +1,15 @@
+# RPG uses the same command entrypoint with a modern, isolated continual runner.
+# Dispatch before importing legacy Sacred / SMAC dependencies.
+import sys
+if __name__ == '__main__' and any(
+    arg == '--config=qmix_rpg' or
+    (arg == '--config' and i + 1 < len(sys.argv) and sys.argv[i + 1] == 'qmix_rpg')
+    for i, arg in enumerate(sys.argv)
+):
+    from rpg_run import main as rpg_main
+    rpg_main()
+    raise SystemExit(0)
+
 import numpy as np
 import os
 import collections
