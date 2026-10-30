@@ -215,6 +215,10 @@ class RPGQLearner:
             "attention_loss": attention_loss.item(), "relation_loss": relation.item(),
             "hyper_loss": hyper.item(), "gamma_p": self.gamma_p,
             "grad_norm": float(grad_norm),
+            "weighted_attention_loss": float(getattr(self.args, "rpg_alpha_att", 0.001)) * attention_loss.item(),
+            "weighted_relation_loss": self.gamma_p * relation.item(),
+            "weighted_hyper_loss": hyper.item(),
+            "calibration_episodes": len(self.return_samples),
             **{key: value.item() for key, value in details.items()},
         }
         if self.logger is not None and t_env - self.log_stats_t >= getattr(self.args, "learner_log_interval", 2000):
@@ -268,7 +272,12 @@ class RPGQLearner:
             }
         self.optimiser.zero_grad(set_to_none=True)
         self.mac.hidden_states = self.mac.last_entropy = None
-        return {"importance_episodes": count, "importance_max_before_normalization": maximum}
+        return {"importance_episodes": count, "importance_max_before_normalization": maximum,
+                "importance_by_parameter": {
+                    name: {"mean": value.mean().item(), "max": value.max().item(),
+                           "nonzero_fraction": (value > 0).float().mean().item()}
+                    for name, value in importance.items()},
+                "gamma_p": self.gamma_p, "return_samples": list(self.return_samples)}
 
     def _update_targets(self):
         self.target_mac.load_state(self.mac)

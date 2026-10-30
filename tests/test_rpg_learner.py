@@ -110,6 +110,7 @@ def test_importance_uses_squared_individual_gradients_and_global_max():
     obj.args = args()
     obj.optimiser = th.optim.SGD(agent.parameters(), lr=0.1)
     obj.current_task, obj.completed_tasks = "a", []
+    obj.gamma_p, obj.return_samples = 0.0, []
     obj.relation_anchors, obj.relation_importance, obj.hyper_targets = {}, {}, {}
     data = batch(TinyDecomposer())
     data.data.transition_data["reward"][0].fill_(1)
@@ -147,6 +148,20 @@ def test_relation_regularization_sums_all_task_anchors():
     expected = sum(p.numel() for p in named.values()) * (1 ** 2 + 2 ** 2) * obj.args.rpg_lambda_rc / 2
     assert rc.item() == pytest.approx(expected)
     assert hy.item() == 0
+
+
+def test_hyper_regularizer_is_sum_of_squared_outputs_averaged_over_old_tasks():
+    obj = learner()
+    obj.begin_task('a')
+    reference = {task: obj.mac.agent.generated_parameters(task).detach().clone()
+                 for task in ('a', 'b')}
+    obj.hyper_targets = {'a': reference['a'] - 1, 'b': reference['b'] - 2}
+    _, loss = obj.regularization_losses()
+    size = reference['a'].numel()
+    assert loss.item() == pytest.approx(obj.args.rpg_lambda_hy / 2 * size * 5)
+    loss.backward()
+    assert sum(p.grad.abs().sum().item() for p in obj.mac.agent.hypernetwork.parameters()
+               if p.grad is not None) > 0
 
 
 def test_padding_does_not_change_td_or_attention_loss():

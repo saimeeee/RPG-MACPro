@@ -1,8 +1,8 @@
 # 在 MACPro 上复现 RPG（IJCAI 2025）
 
-更新：已完成可保存为 AutoDL 私有镜像的 Linux 环境，四图真实对局、RPG 冒烟训练及
-50 项测试通过。保存与复用见 [SMAC_IMAGE_VALIDATION.md](SMAC_IMAGE_VALIDATION.md)。
-下文“本机未安装”的描述指 Windows 工作站；服务器已验证环境，完整论文训练仍待 GPU 实例。
+更新：Linux/SC2 镜像与四图三种子基线训练已完成，但基线胜率与遗忘结果未复现论文。
+默认 replay 已改为 5000；方法、未知参数与修订依据见 [PAPER_FIDELITY.md](PAPER_FIDELITY.md)。
+保存镜像与复用见 [SMAC_IMAGE_VALIDATION.md](SMAC_IMAGE_VALIDATION.md)。
 
 本目录基于 [lilh76/MACPro](https://github.com/lilh76/MACPro)，基准提交为
 `950b7a259eb5fe171dcc8f3e24f5fd1448b92466`。
@@ -60,6 +60,10 @@ cd RPG-MACPro
 用 `--set=batch_size=4` 等覆盖已有标量配置；所有最终配置写入结果目录。
 每个阶段按完整 episode 结束，因此实际步数可能略超预算。最初 N 个探测 episode
 计入预算并进入当前任务回放池，随后才开始优化；测试 episode 不计入训练步数。
+这是默认 `rpg_return_calibration=greedy_pretrain` 的重建约定。可用
+`--set=rpg_return_calibration=training_episodes` 改为普通训练的前 N 个回合；作者未公布具体流程。
+`reset_epsilon=true` 保持原实验每任务重置探索率的行为；MACPro 默认为 false。
+这些选项应独立对照，不能同时改变后将效果归因于 replay。
 
 在其他机器创建环境：
 
@@ -70,7 +74,7 @@ python -m venv .venv
 ```
 
 GPU 训练需安装与驱动匹配的 CUDA PyTorch wheel，再使用 `--device=cuda`。
-`--device=auto` 会自动选择可用设备；本次实际验证使用 CPU，没有 GPU 加速结果。
+`--device=auto` 会自动选择可用设备；Windows 使用 CPU，Linux 服务器已验证 CUDA 训练。
 不要安装原仓库的旧 `requirements.txt` 来运行新增 RPG 路径，也不要将原仓库
 修改过的 `src/envs/lb-foraging` 安装进这个环境。
 
@@ -88,11 +92,11 @@ GPU 训练需安装与驱动匹配的 CUDA PyTorch wheel，再使用 `--device=c
 阶段预算从 Figure 3/4 的训练背景边界读取。论文注明三组随机种子，具体种子值
 未公布；脚本采用 0、1、2。原 MACPro 的 13m、4m 配置未被误用为本文设置。
 
-本机未检测到 StarCraft II 可执行文件。先安装游戏，按照
+Windows 工作站未安装游戏；Linux 服务器已验证 SC2 4.10.0.75689。新环境按照
 [SMAC 官方说明](https://github.com/oxwhirl/smac)配置 `SC2PATH`，将仓库中的地图
 复制到 `<SC2PATH>/Maps/SMAC_Maps/`。建议另建 Python 3.10 环境运行旧 SC2 软件栈，
-安装 PyTorch 和 `requirements-rpg-smac.txt`。这些可选依赖及实际游戏训练尚未在本机
-完成端到端验证。RPG 工厂会加载本仓库的 SMAC，不要求把整个原项目安装成包。
+安装 PyTorch 和 `requirements-rpg-smac.txt`。
+RPG 工厂会加载本仓库的 SMAC，不要求把整个原项目安装成包。
 
 ```text
 python scripts/check_rpg_smac.py

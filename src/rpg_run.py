@@ -23,13 +23,33 @@ from components.transforms import OneHot
 from controllers import REGISTRY as MAC_REGISTRY
 from learners import REGISTRY as LEARNER_REGISTRY
 from rpg_envs import build_env
-from rpg_runtime import collect_runtime, record_observed_game, save_runtime
+from rpg_runtime import collect_runtime, model_parameter_counts, record_observed_game, save_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def task_name(spec):
     return spec if isinstance(spec, str) else spec['name']
+
+
+def training_clock(config, stage_steps, total_steps):
+    """Legacy RPG resets exploration; MACPro's default uses global steps."""
+    return stage_steps if config.get('reset_epsilon', True) else total_steps
+
+
+def observe_calibration(learner, result, config, logger, task, step, mode):
+    """Keep Eq. 9's first N returns auditable, without drawing random numbers."""
+    if len(learner.return_samples) >= config['rpg_return_probe_episodes']:
+        return
+    normalized = float(np.clip((result['return'] - config['return_min']) /
+                              (config['return_max'] - config['return_min']), 0, 1))
+    learner.observe_return(normalized)
+    logger.write('calibration.jsonl', {
+        'task': task, 'step': step, 'mode': mode,
+        'episode': len(learner.return_samples), 'return': result['return'],
+        'normalized_return': normalized, 'gamma_p': learner.gamma_p,
+        'complete': len(learner.return_samples) == config['rpg_return_probe_episodes'],
+    })
 
 
 class ExperimentLogger:
@@ -101,8 +121,14 @@ def evaluate(mac, runners, tasks, n_episodes, logger, step, stage, embedding_tas
     # alter the training RNG stream; environment RNGs are already separate.
     rng = (random.getstate(), np.random.get_state(), torch.get_rng_state(),
            torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None)
+    # Restore controller state as well as RNGs. A rollout resets these fields,
+    # but callers must not inherit the last evaluated task's hidden state or
+    # epsilon, including when an environment raises during evaluation.
+    controller_state = (mac.hidden_states, mac.last_entropy,
+                        mac.action_selector.epsilon, mac.agent.training)
     rows = []
     try:
+        mac.agent.eval()
         for task in tasks:
             episodes = [runners[task].run(mac, test_mode=True, embedding_task=embedding_task)[1]
                         for _ in range(n_episodes)]
@@ -115,6 +141,9 @@ def evaluate(mac, runners, tasks, n_episodes, logger, step, stage, embedding_tas
             rows.append(row)
         return rows
     finally:
+        mac.hidden_states, mac.last_entropy = controller_state[:2]
+        mac.action_selector.epsilon = controller_state[2]
+        mac.agent.train(controller_state[3])
         random.setstate(rng[0]); np.random.set_state(rng[1]); torch.set_rng_state(rng[2])
         if rng[3] is not None:
             torch.cuda.set_rng_state_all(rng[3])
@@ -168,6 +197,12 @@ def load_config(cli):
         raise ValueError('Invalid replay capacity or task step budget')
     if config['return_max'] <= config['return_min']:
         raise ValueError('return_max must exceed return_min')
+    if config.get('rpg_return_calibration', 'greedy_pretrain') not in ('greedy_pretrain', 'training_episodes'):
+        raise ValueError('rpg_return_calibration must be greedy_pretrain or training_episodes')
+    if not isinstance(config.get('reset_epsilon', True), bool):
+        raise ValueError('reset_epsilon must be boolean')
+    if config.get('obs_agent_id', False):
+        raise ValueError('RPG does not implement agent ID features; obs_agent_id=true would be ignored')
     if cli.zero_shot_embedding and not cli.evaluate:
         raise ValueError('Zero-shot evaluation requires --evaluate and --checkpoint')
     return config
@@ -226,6 +261,8 @@ def run_experiment(config, cli):
         mac = MAC_REGISTRY[config['mac']](train_tasks, schemes, task_args, args,
                                        task2decomposer={t: decomposers[t] for t in train_tasks}).to(device)
         learner = LEARNER_REGISTRY[config['learner']](mac, logger, args)
+        runtime['model_parameters'] = model_parameter_counts(learner)
+        save_runtime(output, runtime)
         total_steps, episode_num, start_stage, boundary_rows = 0, 0, 0, []
         if cli.checkpoint:
             learner.load_models(cli.checkpoint)
@@ -271,14 +308,17 @@ def run_experiment(config, cli):
                                       preprocess=preprocess, device='cpu')
                 stage_steps, last_test = 0, 0
                 last_console_step = total_steps
-                # First N greedy episodes calibrate transfer ability before any
-                # new-task gradient update. Their steps count toward the budget.
-                for _ in range(config['rpg_return_probe_episodes']):
+                # Missing keys preserve old checkpoint behavior. Both modes
+                # count calibration episodes in the same task step budget.
+                calibration = config.get('rpg_return_calibration', 'greedy_pretrain')
+                probe_count = config['rpg_return_probe_episodes'] if calibration == 'greedy_pretrain' else 0
+                for _ in range(probe_count):
                     batch, result = runners[task].run(mac, test_mode=True)
-                    learner.observe_return(float(np.clip((result['return'] - config['return_min']) /
-                                                          (config['return_max'] - config['return_min']), 0, 1)))
                     batch.to('cpu'); buffer.insert_episode_batch(batch)
                     stage_steps += result['length']; total_steps += result['length']; episode_num += 1
+                    observe_calibration(learner, result, config, logger, task, total_steps, calibration)
+                    logger.write('episodes.jsonl', {'task': task, 'step': total_steps,
+                                                   'phase': 'calibration', 'epsilon': 0.0, **result})
                 if stage_steps >= config['task_steps'][stage]:
                     raise ValueError('Task step budget exhausted by return probes; increase budget or reduce probes')
                 record_observed_game(runtime, task, envs[task])
@@ -286,10 +326,15 @@ def run_experiment(config, cli):
                 logger.console_logger.info('Task %s (%s/%s), gamma_p=%.4f', task, stage+1, len(train_tasks), learner.gamma_p)
                 updates_before = learner.train_steps
                 while stage_steps < config['task_steps'][stage]:
-                    batch, result = runners[task].run(mac, t_env=stage_steps)
+                    epsilon_step = training_clock(config, stage_steps, total_steps)
+                    batch, result = runners[task].run(mac, t_env=epsilon_step)
+                    epsilon = float(mac.action_selector.epsilon)
                     batch.to('cpu'); buffer.insert_episode_batch(batch)
                     stage_steps += result['length']; total_steps += result['length']; episode_num += 1
-                    logger.write('episodes.jsonl', {'task': task, 'step': total_steps, **result})
+                    if calibration == 'training_episodes':
+                        observe_calibration(learner, result, config, logger, task, total_steps, calibration)
+                    logger.write('episodes.jsonl', {'task': task, 'step': total_steps,
+                                                   'phase': 'training', 'epsilon': epsilon, **result})
                     elapsed = time.monotonic() - started_at
                     if total_steps - last_console_step >= config['learner_log_interval']:
                         logger.console_logger.info('Task %s: %s/%s steps, total=%s, elapsed=%.0fs',
@@ -313,6 +358,8 @@ def run_experiment(config, cli):
                         last_test = stage_steps
                 if learner.train_steps == updates_before:
                     raise RuntimeError('No optimizer update occurred; increase task budget or reduce batch_size')
+                if len(learner.return_samples) < config['rpg_return_probe_episodes']:
+                    raise RuntimeError('Task ended before the first N return-calibration episodes completed')
                 importance = learner.end_task(task, buffer)
                 rows = evaluate(mac, eval_runners, train_tasks[:stage+1], config['test_nepisode'], logger, total_steps, stage)
                 for seen in train_tasks[:stage+1]:

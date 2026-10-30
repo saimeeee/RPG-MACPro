@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from components.episode_buffer import ReplayBuffer
-from rpg_run import RPGRunner, load_config, make_scheme, run_experiment
+from rpg_run import RPGRunner, load_config, make_scheme, run_experiment, training_clock
 
 
 class EndingEnv:
@@ -168,3 +168,61 @@ def test_main_cli_evaluates_a_saved_boundary_without_training(trained_run):
     assert len(rows) == 2
     assert all(row["stage"] == "checkpoint" for row in rows)
     assert not (destination / "updates.jsonl").exists()
+
+
+def test_exploration_clock_is_explicit_and_legacy_compatible():
+    assert training_clock({}, 100, 1000100) == 100
+    assert training_clock({'reset_epsilon': True}, 100, 1000100) == 100
+    assert training_clock({'reset_epsilon': False}, 100, 1000100) == 1000100
+
+
+@pytest.mark.parametrize('option', ['obs_agent_id=true', 'reset_epsilon=1',
+                                  'rpg_return_calibration=unsupported'])
+def test_unsupported_or_ambiguous_protocol_config_is_rejected(tmp_path, option):
+    command = cli(tmp_path / 'invalid')
+    command.set = [option]
+    with pytest.raises(ValueError):
+        load_config(command)
+
+
+def test_legacy_checkpoints_keep_the_same_training_protocol(trained_run):
+    folder, original = trained_run
+    config = json.loads((original / 'config.json').read_text())
+    config.pop('reset_epsilon')
+    config.pop('rpg_return_calibration')
+    output = run_experiment(config, cli(folder / 'legacy_keys'))
+    reference = torch.load(original / 'checkpoints/task_01/learner.th', weights_only=True)
+    legacy = torch.load(output / 'checkpoints/task_01/learner.th', weights_only=True)
+    for key in ('agent', 'mixer', 'optimiser', 'relation_importance', 'torch_rng', 'return_samples'):
+        _assert_tensor_tree_equal(reference[key], legacy[key])
+
+
+def test_training_episode_calibration_adds_no_extra_greedy_rollouts(trained_run):
+    folder, original = trained_run
+    config = json.loads((original / 'config.json').read_text())
+    config.update(rpg_return_calibration='training_episodes', reset_epsilon=False,
+                  rpg_return_probe_episodes=2)
+    output = run_experiment(config, cli(folder / 'training_calibration'))
+    episodes = [json.loads(x) for x in (output / 'episodes.jsonl').read_text().splitlines()]
+    probes = [json.loads(x) for x in (output / 'calibration.jsonl').read_text().splitlines()]
+    summary = json.loads((output / 'summary.json').read_text())
+    assert all(x['phase'] == 'training' for x in episodes)
+    assert sum(x['length'] for x in episodes) == summary['environment_steps']
+    assert len(probes) == 4
+    for spec in config['tasks']:
+        task = spec['name']
+        first = [x for x in episodes if x['task'] == task][:2]
+        actual = [x for x in probes if x['task'] == task]
+        assert [x['return'] for x in actual] == [x['return'] for x in first]
+        assert [x['complete'] for x in actual] == [False, True]
+        expected = np.mean([np.clip((x['return'] - config['return_min']) /
+                                   (config['return_max'] - config['return_min']), 0, 1) for x in first])
+        assert actual[-1]['gamma_p'] == pytest.approx(expected)
+    runtime = json.loads((output / 'runtime.json').read_text())
+    assert 'src/controllers/rpg_controller.py' in runtime['source_sha256']
+    assert 'src/components/episode_buffer.py' in runtime['source_sha256']
+    assert runtime['model_parameters']['agent_total'] > 0
+    updates = [json.loads(x) for x in (output / 'updates.jsonl').read_text().splitlines()]
+    for row in updates:
+        assert row['loss'] == pytest.approx(row['td_loss'] + row['weighted_attention_loss'] +
+                                          row['weighted_relation_loss'] + row['weighted_hyper_loss'], abs=1e-6)

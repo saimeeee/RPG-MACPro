@@ -9,7 +9,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from modules.agents.rpg_agent import RPGAgent
+from modules.agents.rpg_agent import RPGAgent, RelationCapturer
 from modules.mixers.rpg_mixer import RPGMixer
 
 
@@ -60,6 +60,18 @@ def visible_observations(decomposer, batch=2):
     obs = torch.randn(batch, decomposer.obs_dim)
     obs.reshape(batch, -1, 3)[..., 2] = 1
     return obs
+
+
+def test_attention_equations_match_uniform_and_masked_analytic_values():
+    query = torch.zeros(1, 2)
+    keys = torch.ones(1, 3, 2)
+    values = torch.tensor([[[1., 2.], [3., 6.], [9., 10.]]])
+    pooled, entropy = RelationCapturer.attend(query, keys, values, torch.ones(1, 3))
+    torch.testing.assert_close(pooled, values.mean(1))
+    torch.testing.assert_close(entropy, torch.tensor([3.]).log())
+    pooled, entropy = RelationCapturer.attend(query, keys, values, torch.tensor([[0, 1, 0]]))
+    torch.testing.assert_close(pooled, values[:, 1])
+    torch.testing.assert_close(entropy, torch.zeros(1))
 
 
 def test_entity_permutations_preserve_relations_and_permute_target_actions():
